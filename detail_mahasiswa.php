@@ -110,9 +110,7 @@ $result_nilai_bermasalah = $conn->query("SELECT * FROM nilai_bermasalah WHERE ni
                 <p class="lead mb-0">NIM: <?= htmlspecialchars($mahasiswa['nim']); ?> | IPK: <?= number_format($mahasiswa['ipk'], 2); ?></p>
             </div>
             <div>
-                <a href="cetak_laporan_lengkap.php?nim=<?= $mahasiswa['nim']; ?>" class="btn btn-light" target="_blank">
-                    <i class="bi bi-printer-fill me-2"></i>Cetak Laporan Lengkap
-                </a>
+                <a href="cetak_laporan_lengkap.php?nim=<?= $mahasiswa['nim']; ?>" class="btn btn-light" target="_blank"><i class="bi bi-printer-fill me-2"></i>Cetak Laporan Lengkap</a>
             </div>
         </div>
     </div>
@@ -196,25 +194,29 @@ $result_nilai_bermasalah = $conn->query("SELECT * FROM nilai_bermasalah WHERE ni
             
             <div class="card shadow-sm mt-4 animate__animated animate__fadeInUp">
                 <div class="card-header bg-warning text-dark"><h5 class="mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>Peringatan Akademik</h5></div>
-                <div class="card-body">
+                <div class="card-body p-0">
                     <?php if ($result_nilai_bermasalah->num_rows > 0): ?>
-                        <p class="small text-muted">Daftar mata kuliah dengan nilai C, D, atau E. Klik untuk memberi arahan.</p>
-                        <div class="list-group list-group-flush">
+                        <p class="small text-muted p-3 mb-0">Daftar mata kuliah dengan nilai C, D, atau E.</p>
+                        <ul class="list-group list-group-flush">
                             <?php mysqli_data_seek($result_nilai_bermasalah, 0); while($nilai = $result_nilai_bermasalah->fetch_assoc()): ?>
-                            <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div>
-                                    <strong class="d-block"><?= htmlspecialchars($nilai['nama_mk']); ?></strong>
-                                    <small class="text-muted">Semester <?= htmlspecialchars($nilai['semester_diambil']); ?></small>
+                            <li class="list-group-item nilai-item" data-mk="<?= htmlspecialchars($nilai['nama_mk']); ?>" data-nilai="<?= htmlspecialchars($nilai['nilai_huruf']); ?>">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong class="d-block"><?= htmlspecialchars($nilai['nama_mk']); ?></strong>
+                                        <small class="text-muted">Semester <?= htmlspecialchars($nilai['semester_diambil']); ?></small>
+                                    </div>
+                                    <span class="badge bg-danger rounded-pill fs-6"><?= htmlspecialchars($nilai['nilai_huruf']); ?></span>
                                 </div>
-                                <div>
-                                    <span class="badge bg-danger rounded-pill fs-6 me-2"><?= htmlspecialchars($nilai['nilai_huruf']); ?></span>
-                                    <a href="#" class="btn btn-sm btn-outline-primary btn-beri-arahan" data-mk="<?= htmlspecialchars($nilai['nama_mk']); ?>" data-nilai="<?= htmlspecialchars($nilai['nilai_huruf']); ?>" title="Beri Arahan Bimbingan"><i class="bi bi-send"></i></a>
-                                </div>
-                            </div>
+                            </li>
                             <?php endwhile; ?>
+                        </ul>
+                        <div class="card-footer bg-transparent border-0 p-3">
+                            <div class="d-grid">
+                                <button id="kirimPeringatanMassal" class="btn btn-primary"><i class="bi bi-send-fill me-2"></i>Kirim Peringatan ke Logbook</button>
+                            </div>
                         </div>
                     <?php else: ?>
-                        <p class="text-center text-muted mb-0">Tidak ada laporan nilai bermasalah.</p>
+                        <p class="text-center text-muted p-4 mb-0">Tidak ada laporan nilai bermasalah.</p>
                     <?php endif; ?>
                 </div>
             </div>
@@ -255,22 +257,33 @@ document.addEventListener('DOMContentLoaded', function() {
         placeholder.style.display = 'block';
     }
 
-    const tombolArahan = document.querySelectorAll('.btn-beri-arahan');
-    const tabLogbook = new bootstrap.Tab(document.getElementById('logbook-tab'));
-    const inputTopik = document.getElementById('topik_bimbingan');
-    const inputIsi = document.getElementById('isi_bimbingan');
-    tombolArahan.forEach(button => {
-        button.addEventListener('click', function(e) {
+    const tombolPeringatan = document.getElementById('kirimPeringatanMassal');
+    if(tombolPeringatan) {
+        const tabLogbook = new bootstrap.Tab(document.getElementById('logbook-tab'));
+        const inputTopik = document.getElementById('topik_bimbingan');
+        const inputIsi = document.getElementById('isi_bimbingan');
+        
+        tombolPeringatan.addEventListener('click', function(e) {
             e.preventDefault();
-            const mataKuliah = this.dataset.mk;
-            const nilaiHuruf = this.dataset.nilai;
+            
+            const nilaiItems = document.querySelectorAll('.nilai-item');
+            if(nilaiItems.length === 0) return;
+
+            let pesan = 'Berdasarkan laporan, terdapat beberapa nilai yang perlu mendapat perhatian khusus:\n\n';
+            nilaiItems.forEach(item => {
+                const mataKuliah = item.dataset.mk;
+                const nilaiHuruf = item.dataset.nilai;
+                pesan += '- ' + mataKuliah + ' (Nilai: ' + nilaiHuruf + ')\n';
+            });
+            pesan += '\nMohon segera diskusikan rencana perbaikan untuk mata kuliah di atas.';
+
             tabLogbook.show();
-            inputTopik.value = 'Tindak Lanjut Nilai: ' + mataKuliah;
-            inputIsi.value = 'Berdasarkan laporan, nilai Anda untuk mata kuliah "' + mataKuliah + '" adalah ' + nilaiHuruf + '. Mohon segera diskusikan rencana perbaikannya.\n\nCatatan tambahan:\n';
+            inputTopik.value = 'Peringatan Akademik Terkait Nilai';
+            inputIsi.value = pesan;
             inputIsi.focus();
             window.scrollTo({ top: 0, behavior: 'smooth' });
         });
-    });
+    }
 });
 </script>
 <?php 
