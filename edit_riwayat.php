@@ -4,6 +4,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] != 'dosen') {
     header("Location: login.php");
     exit();
 }
+//sadhjasgdjhasgdjasgdj
 
 $page_title = 'Edit Riwayat Mahasiswa';
 require 'templates/header.php';
