@@ -68,7 +68,7 @@ $result_mhs = $stmt_mhs->get_result();
 if ($result_mhs->num_rows === 0) { header("Location: dashboard_dosen.php"); exit(); }
 $mahasiswa = $result_mhs->fetch_assoc();
 $result_log = $conn->query("SELECT * FROM logbook WHERE nim_mahasiswa = '{$nim_mahasiswa}' ORDER BY tanggal_bimbingan DESC, created_at DESC");
-$daftar_pencapaian = ['Seminar Proposal', 'Penelitian Selesai', 'Seminar Hasil', 'Ujian Skripsi (Yudisium)', 'Publikasi Jurnal'];
+$daftar_pencapaian = ['Seminar Proposal', 'Ujian Komperehensif', 'Seminar Hasil', 'Ujian Skripsi (Yudisium)', 'Publikasi Jurnal'];
 $result_pencapaian = $conn->query("SELECT nama_pencapaian, status, tanggal_selesai FROM pencapaian WHERE nim_mahasiswa = '{$nim_mahasiswa}'");
 $status_pencapaian = [];
 while($row = $result_pencapaian->fetch_assoc()) { $status_pencapaian[$row['nama_pencapaian']] = $row; }
