@@ -6,8 +6,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['user_role'] != 'dosen' || !isset(
     exit('Akses ditolak. Silakan login terlebih dahulu.');
 }
 
-// Pastikan library FPDF ada dan di-require sekali saja.
-require_once('fpdf/fpdf.php'); 
+require_once('fpdf/fpdf.php'); // Pastikan library FPDF ada
 
 // Koneksi ke database
 $host = 'localhost'; $db_user = 'root'; $db_pass = ''; $db_name = 'db_pa_akademi';
@@ -28,20 +27,20 @@ if (!$mhs_data) { exit('Data mahasiswa tidak ditemukan atau Anda tidak memiliki 
 $dosen_pa_name = $mhs_data['nama_dosen'];
 $dosen_pa_nidn = $mhs_data['nidn_dosen'];
 
-// 2. Data Riwayat Bimbingan (Logbook)
-$logbook_result = $conn->query("SELECT * FROM logbook WHERE nim_mahasiswa = '{$nim}' ORDER BY tanggal_bimbingan ASC");
+// 2. ### PERUBAHAN UTAMA 1: Ambil HANYA logbook peringatan nilai yang paling BARU ###
+$logbook_result = $conn->query("SELECT * FROM logbook WHERE nim_mahasiswa = '{$nim}' AND topik_bimbingan = 'Peringatan Akademik Terkait Nilai' ORDER BY tanggal_bimbingan DESC, created_at DESC LIMIT 1");
 
 // 3. Data Kemajuan Studi (Milestones)
-$daftar_pencapaian = ['Seminar Proposal', 'Penelitian Selesai', 'Seminar Hasil', 'Ujian Skripsi (Yudisium)', 'Publikasi Jurnal'];
+$daftar_pencapaian = ['Seminar Proposal', 'Ujian Komperehensif', 'Seminar Hasil', 'Ujian Skripsi (Yudisium)', 'Publikasi Jurnal'];
 $result_pencapaian = $conn->query("SELECT nama_pencapaian, status, tanggal_selesai FROM pencapaian WHERE nim_mahasiswa = '{$nim}'");
 $status_pencapaian = [];
 while($row = $result_pencapaian->fetch_assoc()) { $status_pencapaian[$row['nama_pencapaian']] = $row; }
 
-// 4. Data Nilai Bermasalah (C/D/E)
+// 4. ### PERUBAHAN UTAMA 2: Ambil data nilai bermasalah dari tabel yang BENAR ###
 $nilai_kritis_result = $conn->query("SELECT nama_mk, semester_diambil, nilai_huruf FROM nilai_bermasalah WHERE nim_mahasiswa = '{$nim}' ORDER BY semester_diambil ASC");
 
 
-// ### PERUBAHAN UTAMA: Modifikasi Class PDF untuk Tabel Dinamis ###
+// === Class PDF yang sudah dimodifikasi untuk tabel dinamis ===
 class PDF_MC_Table extends FPDF {
     var $widths;
     var $aligns;
@@ -49,57 +48,48 @@ class PDF_MC_Table extends FPDF {
     function SetWidths($w) { $this->widths = $w; }
     function SetAligns($a) { $this->aligns = $a; }
 
-    function Row($data) {
+    function Row($data, $is_header = false, $is_warning = false) {
         $nb = 0;
         for ($i = 0; $i < count($data); $i++) {
             $nb = max($nb, $this->NbLines($this->widths[$i], $data[$i]));
         }
         $h = 5 * $nb;
         $this->CheckPageBreak($h);
+
+        if ($is_header) {
+            $this->SetFillColor(230, 230, 230);
+        } elseif ($is_warning) {
+            $this->SetFillColor(255, 243, 205); // Warna kuning muda untuk peringatan
+        } else {
+            $this->SetFillColor(255, 255, 255);
+        }
+
         for ($i = 0; $i < count($data); $i++) {
             $w = $this->widths[$i];
             $a = isset($this->aligns[$i]) ? $this->aligns[$i] : 'L';
             $x = $this->GetX();
             $y = $this->GetY();
-            $this->Rect($x, $y, $w, $h);
+            $this->Rect($x, $y, $w, $h, 'DF');
             $this->MultiCell($w, 5, $data[$i], 0, $a);
             $this->SetXY($x + $w, $y);
         }
         $this->Ln($h);
     }
 
-    function CheckPageBreak($h) {
-        if ($this->GetY() + $h > $this->PageBreakTrigger) {
-            $this->AddPage($this->CurOrientation);
-        }
-    }
+    function CheckPageBreak($h) { if ($this->GetY() + $h > $this->PageBreakTrigger) { $this->AddPage($this->CurOrientation); } }
 
     function NbLines($w, $txt) {
-        $cw = &$this->CurrentFont['cw'];
-        if ($w == 0) $w = $this->w - $this->rMargin - $this->x;
-        $wmax = ($w - 2 * $this->cMargin) * 1000 / $this->FontSize;
-        $s = str_replace("\r", '', $txt);
-        $nb = strlen($s);
-        if ($nb > 0 && $s[$nb - 1] == "\n") $nb--;
+        $cw = &$this->CurrentFont['cw']; if ($w == 0) $w = $this->w - $this->rMargin - $this->x;
+        $wmax = ($w - 2 * $this->cMargin) * 1000 / $this->FontSize; $s = str_replace("\r", '', $txt);
+        $nb = strlen($s); if ($nb > 0 && $s[$nb - 1] == "\n") $nb--;
         $sep = -1; $i = 0; $j = 0; $l = 0; $nl = 1;
         while ($i < $nb) {
-            $c = $s[$i];
-            if ($c == "\n") {
-                $i++; $sep = -1; $j = $i; $l = 0; $nl++;
-                continue;
-            }
-            if ($c == ' ') $sep = $i;
-            $l += $cw[$c];
+            $c = $s[$i]; if ($c == "\n") { $i++; $sep = -1; $j = $i; $l = 0; $nl++; continue; }
+            if ($c == ' ') $sep = $i; $l += $cw[$c];
             if ($l > $wmax) {
-                if ($sep == -1) {
-                    if ($i == $j) $i++;
-                } else {
-                    $i = $sep + 1;
-                }
+                if ($sep == -1) { if ($i == $j) $i++; } else { $i = $sep + 1; }
                 $sep = -1; $j = $i; $l = 0; $nl++;
-            } else {
-                $i++;
-            }
+            } else { $i++; }
         }
         return $nl;
     }
@@ -110,27 +100,20 @@ class PDF_MC_Table extends FPDF {
         $this->Cell(0,10,'Halaman '.$this->PageNo(),0,0,'R');
     }
 }
-// ### AKHIR PERUBAHAN CLASS PDF ###
 
 $pdf = new PDF_MC_Table('P', 'mm', 'A4');
 $pdf->AddPage();
 
-// === KOP SURAT (Hanya sekali di halaman pertama) ===
-// Diasumsikan Anda memiliki file ini untuk header
-// include 'templates/report_header.php';
-// Jika tidak, Anda bisa membuat header manual di sini
+// === KOP SURAT ===
 $pdf->SetFont('Arial', 'B', 16);
 $pdf->Cell(0, 10, 'UNIVERSITAS ISLAM NEGERI KOTA PALOPO', 0, 1, 'C');
-$pdf->SetFont('Arial', 'B', 12);
-$pdf->Cell(0, 7, 'FAKULTAS SYARIAH DAN HUKUM', 0, 1, 'C');
 $pdf->SetFont('Arial', '', 10);
 $pdf->Cell(0, 5, 'Jl. Agatis II, Balandai, Kec. Bara, Kota Palopo, Sulawesi Selatan 91914', 0, 1, 'C');
 $pdf->SetLineWidth(1);
-$pdf->Line(10, 36, 200, 36);
+$pdf->Line(10, 28, 200, 28);
 $pdf->SetLineWidth(0.2);
-$pdf->Line(10, 37, 200, 37);
+$pdf->Line(10, 29, 200, 29);
 $pdf->Ln(10);
-
 
 // === INFORMASI UMUM MAHASISWA ===
 $pdf->SetFont('Arial', 'B', 14);
@@ -142,43 +125,32 @@ $pdf->Cell(40, 7, 'NIM', 0, 0); $pdf->Cell(5, 7, ':', 0, 0); $pdf->Cell(0, 7, $n
 $pdf->Cell(40, 7, 'Program Studi', 0, 0); $pdf->Cell(5, 7, ':', 0, 0); $pdf->Cell(0, 7, $mhs_data['nama_prodi'], 0, 1);
 $pdf->Ln(10);
 
-// === BAGIAN 1: RIWAYAT BIMBINGAN (Menggunakan Class Baru) ===
-$pdf->SetFont('Arial', 'B', 12); $pdf->SetFillColor(230, 230, 230);
-$pdf->Cell(0, 10, 'BAGIAN I: RIWAYAT BIMBINGAN AKADEMIK', 1, 1, 'C', true);
+// === BAGIAN 1: TINDAK LANJUT PERINGATAN AKADEMIK ===
+$pdf->SetFont('Arial', 'B', 12);
+$pdf->Cell(190, 10, 'BAGIAN I: TINDAK LANJUT PERINGATAN AKADEMIK', 1, 1, 'C', true);
 
-// Set lebar kolom
-$pdf->SetWidths([10, 25, 50, 105]);
-// Set alignment header
-$pdf->SetAligns(['C', 'C', 'C', 'C']);
-// Header
+$pdf->SetWidths([25, 50, 115]);
+$pdf->SetAligns(['C', 'L', 'L']);
 $pdf->SetFont('Arial', 'B', 10);
-$pdf->Row(['No', 'Tanggal', 'Topik', 'Pembahasan & Tindak Lanjut']);
+$pdf->Row(['Tanggal', 'Topik', 'Pembahasan'], true);
 
-// Data
 $pdf->SetFont('Arial', '', 10);
-$pdf->SetAligns(['C', 'C', 'L', 'L']);
-$no = 1;
 if ($logbook_result->num_rows > 0) {
     while ($log = $logbook_result->fetch_assoc()) {
-        $pembahasan = "Pembahasan:\n" . trim($log['isi_bimbingan']);
-        if (!empty($log['tindak_lanjut'])) {
-            $pembahasan .= "\n\nTindak Lanjut:\n" . trim($log['tindak_lanjut']);
-        }
         $pdf->Row([
-            $no++,
             date('d-m-Y', strtotime($log['tanggal_bimbingan'])),
             trim($log['topik_bimbingan']),
-            $pembahasan
-        ]);
+            trim($log['isi_bimbingan'])
+        ], false, true); // true di akhir untuk menandai sebagai baris peringatan (warna kuning)
     }
 } else {
-    $pdf->Cell(190, 10, 'Tidak ada riwayat bimbingan.', 1, 1, 'C');
+    $pdf->Cell(190, 10, 'Tidak ada catatan tindak lanjut untuk peringatan akademik.', 1, 1, 'C');
 }
 $pdf->Ln(10);
 
 // === BAGIAN 2: KEMAJUAN STUDI ===
 $pdf->SetFont('Arial', 'B', 12);
-$pdf->Cell(0, 10, 'BAGIAN II: KEMAJUAN STUDI (MILESTONES)', 1, 1, 'C', true);
+$pdf->Cell(190, 10, 'BAGIAN II: KEMAJUAN STUDI (MILESTONES)', 1, 1, 'C', true);
 $pdf->SetFont('Arial', 'B', 10);
 $pdf->Cell(10, 8, 'No', 1, 0, 'C'); $pdf->Cell(100, 8, 'Pencapaian', 1, 0, 'C');
 $pdf->Cell(40, 8, 'Status', 1, 0, 'C'); $pdf->Cell(40, 8, 'Tanggal Selesai', 1, 1, 'C');
@@ -194,9 +166,9 @@ foreach ($daftar_pencapaian as $item) {
 }
 $pdf->Ln(10);
 
-// === BAGIAN 3: NILAI BERMASALAH ===
+// === BAGIAN 3: LAPORAN NILAI BERMASALAH (AKTIF) ===
 $pdf->SetFont('Arial', 'B', 12);
-$pdf->Cell(0, 10, 'BAGIAN III: LAPORAN NILAI BERMASALAH (C/D/E)', 1, 1, 'C', true);
+$pdf->Cell(190, 10, 'BAGIAN III: LAPORAN NILAI BERMASALAH (AKTIF)', 1, 1, 'C', true);
 $pdf->SetFont('Arial', 'B', 10);
 $pdf->Cell(15, 8, 'No', 1, 0, 'C'); $pdf->Cell(115, 8, 'Nama Mata Kuliah', 1, 0, 'C');
 $pdf->Cell(30, 8, 'Semester', 1, 0, 'C'); $pdf->Cell(30, 8, 'Nilai', 1, 1, 'C');
@@ -206,16 +178,13 @@ if ($nilai_kritis_result->num_rows > 0) {
     while ($nilai = $nilai_kritis_result->fetch_assoc()) {
         $pdf->Cell(15, 8, $no++, 1, 0, 'C'); $pdf->Cell(115, 8, $nilai['nama_mk'], 1, 0);
         $pdf->Cell(30, 8, $nilai['semester_diambil'], 1, 0, 'C');
-        $pdf->SetFont('Arial', 'B', 10); $pdf->SetTextColor(220, 53, 69); // Merah
+        $pdf->SetFont('Arial', 'B', 10); $pdf->SetTextColor(220, 53, 69);
         $pdf->Cell(30, 8, $nilai['nilai_huruf'], 1, 1, 'C');
         $pdf->SetFont('Arial', '', 10); $pdf->SetTextColor(0, 0, 0);
     }
-} else { $pdf->Cell(190, 8, 'Tidak ada laporan nilai bermasalah.', 1, 1, 'C'); }
+} else { $pdf->Cell(190, 8, 'Tidak ada laporan nilai bermasalah yang aktif.', 1, 1, 'C'); }
 
 // === TANDA TANGAN ===
-// Diasumsikan Anda memiliki file ini untuk footer tanda tangan
-// include 'templates/report_footer.php';
-// Jika tidak, Anda bisa membuat tanda tangan manual di sini
 $pdf->Ln(20);
 $pdf->SetFont('Arial', '', 12);
 $pdf->Cell(120, 7, '', 0, 0);
@@ -229,7 +198,6 @@ $pdf->Cell(0, 7, $dosen_pa_name, 0, 1, 'L');
 $pdf->SetFont('Arial', '', 12);
 $pdf->Cell(120, 7, '', 0, 0);
 $pdf->Cell(0, 7, 'NIDN: ' . $dosen_pa_nidn, 0, 1, 'L');
-
 
 $pdf->Output('D', 'Laporan_Lengkap_' . $nim . '.pdf');
 $conn->close();

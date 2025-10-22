@@ -28,10 +28,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     if (isset($_POST['submit_logbook'])) {
         $tanggal = $_POST['tanggal_bimbingan']; $topik = $_POST['topik_bimbingan'];
         $isi = $_POST['isi_bimbingan']; $tindak_lanjut = $_POST['tindak_lanjut'];
+        
         $stmt_insert = $conn->prepare("INSERT INTO logbook (nim_mahasiswa, id_dosen, pengisi, status_baca, tanggal_bimbingan, topik_bimbingan, isi_bimbingan, tindak_lanjut) VALUES (?, ?, 'Dosen', 'Belum Dibaca', ?, ?, ?, ?)");
         $stmt_insert->bind_param("sissss", $nim_mahasiswa, $id_dosen_login, $tanggal, $topik, $isi, $tindak_lanjut);
-        if ($stmt_insert->execute()) { $pesan_sukses = "Catatan bimbingan berhasil disimpan!"; }
+        if ($stmt_insert->execute()) { 
+            $pesan_sukses = "Catatan bimbingan berhasil disimpan!";
+            
+            // Jika ini logbook peringatan, tandai semua nilai sebagai "Sudah" ditindaklanjuti
+            if ($topik == 'Peringatan Akademik Terkait Nilai') {
+                $conn->query("UPDATE nilai_bermasalah SET status_perbaikan = 'Sudah' WHERE nim_mahasiswa = '{$nim_mahasiswa}'");
+            }
+        }
         $stmt_insert->close();
+
     } elseif (isset($_POST['submit_evaluasi'])) {
         $periode = $_POST['periode_evaluasi']; $skor_evaluasi = $_POST['skor'];
         $stmt_eval = $conn->prepare("INSERT INTO evaluasi_softskill (nim_mahasiswa, id_dosen, periode_evaluasi, kategori, skor) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE skor = VALUES(skor)");
@@ -43,20 +52,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $stmt_eval->close();
     } 
     elseif (isset($_POST['submit_nilai_bermasalah'])) {
-        $nama_mk = $_POST['nama_mk']; $nilai_huruf = $_POST['nilai_huruf']; $semester_diambil = $_POST['semester_diambil'];
-        $check_stmt = $conn->prepare("SELECT id_nilai FROM nilai_bermasalah WHERE nim_mahasiswa = ? AND nama_mk = ?");
-        $check_stmt->bind_param("ss", $nim_mahasiswa, $nama_mk);
-        $check_stmt->execute();
-        $result = $check_stmt->get_result();
-        if ($result->num_rows > 0) {
-            $update_stmt = $conn->prepare("UPDATE nilai_bermasalah SET nilai_huruf = ?, semester_diambil = ? WHERE nim_mahasiswa = ? AND nama_mk = ?");
-            $update_stmt->bind_param("siss", $nilai_huruf, $semester_diambil, $nim_mahasiswa, $nama_mk);
-            if ($update_stmt->execute()) { $pesan_sukses = "Laporan nilai berhasil diperbarui!"; }
-        } else {
-            $insert_stmt = $conn->prepare("INSERT INTO nilai_bermasalah (nim_mahasiswa, nama_mk, nilai_huruf, semester_diambil) VALUES (?, ?, ?, ?)");
-            $insert_stmt->bind_param("sssi", $nim_mahasiswa, $nama_mk, $nilai_huruf, $semester_diambil);
-            if ($insert_stmt->execute()) { $pesan_sukses = "Laporan nilai berhasil disimpan!"; }
+        // Hapus semua laporan nilai bermasalah sebelumnya untuk mahasiswa ini
+        $stmt_delete = $conn->prepare("DELETE FROM nilai_bermasalah WHERE nim_mahasiswa = ?");
+        $stmt_delete->bind_param("s", $nim_mahasiswa);
+        $stmt_delete->execute();
+        $stmt_delete->close();
+        
+        // Loop dan masukkan semua laporan nilai yang baru dari form
+        if (isset($_POST['nama_mk'])) {
+            $nama_mk_list = $_POST['nama_mk'];
+            $nilai_huruf_list = $_POST['nilai_huruf'];
+            $semester_diambil_list = $_POST['semester_diambil'];
+            
+            $stmt_insert = $conn->prepare("INSERT INTO nilai_bermasalah (nim_mahasiswa, nama_mk, nilai_huruf, semester_diambil) VALUES (?, ?, ?, ?)");
+            
+            for ($i = 0; $i < count($nama_mk_list); $i++) {
+                $nama_mk = $nama_mk_list[$i];
+                $nilai_huruf = $nilai_huruf_list[$i];
+                $semester_diambil = $semester_diambil_list[$i];
+                
+                if (!empty($nama_mk) && !empty($nilai_huruf) && !empty($semester_diambil)) {
+                    $stmt_insert->bind_param("sssi", $nim_mahasiswa, $nama_mk, $nilai_huruf, $semester_diambil);
+                    $stmt_insert->execute();
+                }
+            }
+            $stmt_insert->close();
         }
+        $pesan_sukses = "Laporan nilai bermasalah berhasil diperbarui.";
     }
 }
 
@@ -122,9 +144,26 @@ $result_nilai_bermasalah = $conn->query("SELECT * FROM nilai_bermasalah WHERE ni
         <div class="col-lg-7">
             <div class="card shadow-sm mb-4 animate__animated animate__fadeInUp"><div class="card-header"><h5 class="mb-0"><i class="bi bi-journal-text me-2"></i>Riwayat Bimbingan</h5></div>
                 <div class="card-body" style="max-height: 400px; overflow-y: auto;">
-                    <?php if ($result_log->num_rows > 0): while($log = $result_log->fetch_assoc()): $is_dosen = ($log['pengisi'] == 'Dosen'); ?>
-                        <div class="p-3 mb-2 rounded bg-light" style="border-left: 4px solid <?= $is_dosen ? '#0d6efd' : '#198754'; ?>;">
-                            <div class="d-flex justify-content-between"><h6 class="mb-0 <?= $is_dosen ? 'text-primary' : 'text-success'; ?>"><?= htmlspecialchars($log['topik_bimbingan']); ?></h6><small class="text-muted"><?= date('d M Y', strtotime($log['tanggal_bimbingan'])); ?></small></div><small class="badge bg-white text-dark border my-1">Oleh: <?= $log['pengisi']; ?></small>
+                    <?php if ($result_log->num_rows > 0): mysqli_data_seek($result_log, 0); while($log = $result_log->fetch_assoc()): 
+                        $is_dosen = ($log['pengisi'] == 'Dosen');
+                        $is_peringatan = ($log['topik_bimbingan'] == 'Peringatan Akademik Terkait Nilai');
+                        
+                        $border_color = $is_dosen ? '#0d6efd' : '#198754'; // Biru untuk dosen, Hijau untuk mahasiswa
+                        if ($is_peringatan) {
+                            $border_color = '#ffc107'; // Kuning untuk peringatan
+                        }
+                    ?>
+                        <div class="p-3 mb-2 rounded bg-light" style="border-left: 4px solid <?= $border_color; ?>;">
+                            <div class="d-flex justify-content-between">
+                                <h6 class="mb-0">
+                                    <?php if($is_peringatan): ?>
+                                        <i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>
+                                    <?php endif; ?>
+                                    <?= htmlspecialchars($log['topik_bimbingan']); ?>
+                                </h6>
+                                <small class="text-muted"><?= date('d M Y', strtotime($log['tanggal_bimbingan'])); ?></small>
+                            </div>
+                            <small class="badge bg-white text-dark border my-1">Oleh: <?= $log['pengisi']; ?></small>
                             <p class="mb-1"><b>Pembahasan:</b><br><?= nl2br(htmlspecialchars($log['isi_bimbingan'])); ?></p>
                             <?php if (!empty($log['tindak_lanjut'])): ?><p class="mb-0"><b>Tindak Lanjut:</b><br><?= nl2br(htmlspecialchars($log['tindak_lanjut'])); ?></p><?php endif; ?>
                         </div>
@@ -135,7 +174,7 @@ $result_nilai_bermasalah = $conn->query("SELECT * FROM nilai_bermasalah WHERE ni
             <div class="card shadow-sm mb-4 animate__animated animate__fadeInUp">
                 <div class="card-header"><h5 class="mb-0"><i class="bi bi-paperclip me-2"></i>Dokumen Terunggah</h5></div>
                 <div class="card-body">
-                    <?php if ($result_dokumen->num_rows > 0): ?>
+                    <?php if ($result_dokumen->num_rows > 0): mysqli_data_seek($result_dokumen, 0);?>
                         <ul class="list-group list-group-flush">
                             <?php while($dokumen = $result_dokumen->fetch_assoc()): ?>
                             <li class="list-group-item d-flex justify-content-between align-items-center">
@@ -165,7 +204,7 @@ $result_nilai_bermasalah = $conn->query("SELECT * FROM nilai_bermasalah WHERE ni
         </div>
         <div class="col-lg-5">
             <div class="card shadow-sm animate__animated animate__fadeInRight">
-                <div class="card-header"><ul class="nav nav-tabs card-header-tabs" id="aksiTab" role="tablist"><li class="nav-item" role="presentation"><button class="nav-link active" id="logbook-tab" data-bs-toggle="tab" data-bs-target="#logbook-panel" type="button">Tambah Logbook</button></li><li class="nav-item" role="presentation"><button class="nav-link" id="penilaian-tab" data-bs-toggle="tab" data-bs-target="#penilaian-panel" type="button">Penilaian</button></li><li class="nav-item" role="presentation"><button class="nav-link" id="lapor-nilai-tab" data-bs-toggle="tab" data-bs-target="#lapor-nilai-panel" type="button">Lapor Nilai</button></li></ul></div>
+                <div class="card-header"><ul class="nav nav-tabs card-header-tabs" id="aksiTab" role="tablist"><li class="nav-item" role="presentation"><button class="nav-link active" id="logbook-tab" data-bs-toggle="tab" data-bs-target="#logbook-panel" type="button">Tambah Logbook</button></li><li class="nav-item" role="presentation"><button class="nav-link" id="lapor-nilai-tab" data-bs-toggle="tab" data-bs-target="#lapor-nilai-panel" type="button">Lapor Nilai</button></li><li class="nav-item" role="presentation"><button class="nav-link" id="penilaian-tab" data-bs-toggle="tab" data-bs-target="#penilaian-panel" type="button">Penilaian</button></li></ul></div>
                 <div class="card-body"><div class="tab-content" id="aksiTabContent">
                     <div class="tab-pane fade show active" id="logbook-panel" role="tabpanel"><h5 class="mb-3">Tambah Catatan Bimbingan</h5>
                         <form method="POST" action="detail_mahasiswa.php?nim=<?= urlencode($mahasiswa['nim']); ?>">
@@ -176,19 +215,28 @@ $result_nilai_bermasalah = $conn->query("SELECT * FROM nilai_bermasalah WHERE ni
                             <div class="d-grid"><button type="submit" name="submit_logbook" class="btn btn-primary">Simpan</button></div>
                         </form>
                     </div>
-                    <div class="tab-pane fade" id="penilaian-panel" role="tabpanel"><h5 class="mb-3">Form Penilaian Soft Skill</h5><form method="POST" action="detail_mahasiswa.php?nim=<?= urlencode($mahasiswa['nim']); ?>"><input type="hidden" name="periode_evaluasi" value="<?= $periode_sekarang; ?>"><p class="text-muted small">Periode: <strong><?= $periode_sekarang; ?></strong>. Beri skor 1-5.</p><?php foreach ($kategori_softskill as $kategori): ?><div class="mb-3"><label class="form-label"><?= htmlspecialchars($kategori); ?></label><select class="form-select" name="skor[<?= htmlspecialchars($kategori); ?>]" required><option value="">Pilih Skor</option><?php for ($i=1; $i<=5; $i++) echo "<option value='{$i}'>{$i}</option>"; ?></select></div><?php endforeach; ?><div class="d-grid"><button type="submit" name="submit_evaluasi" class="btn btn-primary">Kirim Penilaian</button></div></form></div>
                     <div class="tab-pane fade" id="lapor-nilai-panel" role="tabpanel">
                         <h5 class="mb-3">Lapor Nilai Bermasalah (C/D/E)</h5>
-                        <p class="text-muted small">Laporkan jika mahasiswa mendapat nilai yang perlu perhatian.</p>
+                        <p class="text-muted small">Masukkan semua mata kuliah bermasalah sekaligus. Laporan ini akan menggantikan laporan sebelumnya.</p>
                         <form method="POST" action="detail_mahasiswa.php?nim=<?= urlencode($mahasiswa['nim']); ?>">
-                            <div class="mb-3"><label for="nama_mk" class="form-label">Nama Mata Kuliah</label><input class="form-control" list="datalistOptions" id="nama_mk" name="nama_mk" placeholder="Ketik untuk mencari..." required><datalist id="datalistOptions"><?php foreach ($daftar_matakuliah as $matkul): ?><option value="<?= htmlspecialchars($matkul); ?>"><?php endforeach; ?></datalist></div>
-                            <div class="row">
-                                <div class="col"><div class="mb-3"><label for="nilai_huruf" class="form-label">Nilai</label><select class="form-select" id="nilai_huruf" name="nilai_huruf" required><option value="">Pilih...</option><option value="C">C</option><option value="D">D</option><option value="E">E</option></select></div></div>
-                                <div class="col"><div class="mb-3"><label for="semester_diambil" class="form-label">Semester</label><input type="number" class="form-control" id="semester_diambil" name="semester_diambil" min="1" max="14" placeholder="Cth: 3" required></div></div>
+                            <div id="laporan-container">
+                                <div class="row g-2 align-items-center laporan-baris mb-2">
+                                    <div class="col-12"><input class="form-control" list="datalistOptions" name="nama_mk[]" placeholder="Ketik nama mata kuliah..." required></div>
+                                    <div class="col"><select class="form-select" name="nilai_huruf[]" required><option value="">Nilai</option><option value="C">C</option><option value="D">D</option><option value="E">E</option></select></div>
+                                    <div class="col"><input type="number" class="form-control" name="semester_diambil[]" min="1" max="14" placeholder="Smt" required></div>
+                                    <div class="col-auto"><button type="button" class="btn btn-sm btn-danger btn-hapus-baris" style="display:none;"><i class="bi bi-trash"></i></button></div>
+                                </div>
                             </div>
-                            <div class="d-grid"><button type="submit" name="submit_nilai_bermasalah" class="btn btn-danger">Simpan Laporan Nilai</button></div>
+                            <datalist id="datalistOptions"><?php foreach ($daftar_matakuliah as $matkul): ?><option value="<?= htmlspecialchars($matkul); ?>"><?php endforeach; ?></datalist>
+                            <div class="d-flex justify-content-start mt-2">
+                                <button type="button" id="btn-tambah-baris" class="btn btn-sm btn-outline-primary"><i class="bi bi-plus-circle-fill me-1"></i>Tambah Mata Kuliah</button>
+                            </div>
+                            <div class="d-grid mt-3">
+                                <button type="submit" name="submit_nilai_bermasalah" class="btn btn-danger">Simpan Laporan</button>
+                            </div>
                         </form>
                     </div>
+                    <div class="tab-pane fade" id="penilaian-panel" role="tabpanel"><h5 class="mb-3">Form Penilaian Soft Skill</h5><form method="POST" action="detail_mahasiswa.php?nim=<?= urlencode($mahasiswa['nim']); ?>"><input type="hidden" name="periode_evaluasi" value="<?= $periode_sekarang; ?>"><p class="text-muted small">Periode: <strong><?= $periode_sekarang; ?></strong>. Beri skor 1-5.</p><?php foreach ($kategori_softskill as $kategori): ?><div class="mb-3"><label class="form-label"><?= htmlspecialchars($kategori); ?></label><select class="form-select" name="skor[<?= htmlspecialchars($kategori); ?>]" required><option value="">Pilih Skor</option><?php for ($i=1; $i<=5; $i++) echo "<option value='{$i}'>{$i}</option>"; ?></select></div><?php endforeach; ?><div class="d-grid"><button type="submit" name="submit_evaluasi" class="btn btn-primary">Kirim Penilaian</button></div></form></div>
                 </div></div>
             </div>
             
@@ -228,7 +276,6 @@ $result_nilai_bermasalah = $conn->query("SELECT * FROM nilai_bermasalah WHERE ni
                     <p id="chartPlaceholder" class="text-center text-muted" style="display: none;">Data riwayat akademik belum tersedia untuk ditampilkan.</p>
                 </div>
             </div>
-
         </div>
     </div>
 </div>
@@ -284,6 +331,35 @@ document.addEventListener('DOMContentLoaded', function() {
             window.scrollTo({ top: 0, behavior: 'smooth' });
         });
     }
+    
+    // JAVASCRIPT BARU UNTUK FORM LAPOR NILAI DINAMIS
+    const container = document.getElementById('laporan-container');
+    const tombolTambah = document.getElementById('btn-tambah-baris');
+
+    const updateTombolHapus = () => {
+        const semuaBaris = container.querySelectorAll('.laporan-baris');
+        semuaBaris.forEach((baris, index) => {
+            const tombolHapus = baris.querySelector('.btn-hapus-baris');
+            tombolHapus.style.display = (semuaBaris.length > 1) ? 'inline-block' : 'none';
+        });
+    };
+
+    tombolTambah.addEventListener('click', function() {
+        const barisPertama = container.querySelector('.laporan-baris');
+        const barisBaru = barisPertama.cloneNode(true);
+        barisBaru.querySelectorAll('input, select').forEach(input => input.value = '');
+        container.appendChild(barisBaru);
+        updateTombolHapus();
+    });
+
+    container.addEventListener('click', function(e) {
+        if (e.target.closest('.btn-hapus-baris')) {
+            e.target.closest('.laporan-baris').remove();
+            updateTombolHapus();
+        }
+    });
+
+    updateTombolHapus();
 });
 </script>
 <?php 
