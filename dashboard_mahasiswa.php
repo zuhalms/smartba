@@ -286,6 +286,5 @@ $conn->close();
 </script>
 
 <?php
-$conn->close();
 require 'templates/footer.php';
 ?>
